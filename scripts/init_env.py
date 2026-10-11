@@ -18,7 +18,7 @@ def main():
         f"SMART_ROUTER_UPSTREAM_API_KEY={gateway_key}\n"
         "SMART_ROUTER_PROJECT_ROOTS=[]\n"
         "SMART_ROUTER_CLASSIFIER_ENABLED=false\n"
-        "SMART_ROUTER_CLASSIFIER_MODEL=gpt-5.6-terra\n"
+        "SMART_ROUTER_CLASSIFIER_MODEL=gpt-6-luna\n"
         "OPENAI_API_KEY=\n"
         f"LITELLM_MASTER_KEY={gateway_key}\n"
     )

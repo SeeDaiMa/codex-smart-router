@@ -15,7 +15,7 @@ ACCOUNT_AUTH = {
 
 
 def test_account_auto_needs_no_api_key_and_keeps_account_headers(harness):
-    with harness(auth_mode="chatgpt", upstream_api_key=None) as (client, requests, _):
+    with harness(auth_mode="chatgpt", upstream_api_key=None) as (client, requests, app):
         response = client.post(
             "/backend-api/codex/responses",
             headers={
@@ -26,12 +26,12 @@ def test_account_auto_needs_no_api_key_and_keeps_account_headers(harness):
                 "Originator": "codex_cli_rs",
                 "Accept": "text/event-stream",
             },
-            json={"model": "smart-auto", "input": "修改 Salesforce Authorization Chain"},
+            json={"model": "smart-auto", "input": "修改访问权限校验"},
         )
         assert response.status_code == 200
         forwarded = json.loads(requests[0].content)
-        assert forwarded["model"] == "gpt-6-astra"
-        assert forwarded["reasoning"]["effort"] == "high"
+        assert forwarded["model"] == "gpt-6.1-sol"
+        assert forwarded["reasoning"]["effort"] == app.state.router.engine.tiers.high_risk.reasoning
         assert requests[0].headers["authorization"] == ACCOUNT_AUTH["Authorization"]
         assert requests[0].headers["chatgpt-account-id"] == "test-account"
         assert requests[0].headers["x-codex-turn-id"] == "test-turn"
@@ -61,8 +61,13 @@ def test_manual_selection_passes_through_without_local_chain_state(harness, effo
 def test_native_catalog_preserves_models_and_adds_auto(harness):
     original = {
         "models": [
-            {"slug": "gpt-6.1-sol", "display_name": "Sol", "use_responses_lite": True},
-            {"slug": "gpt-5.6-sol", "base_instructions": "Native Codex instructions"},
+            {
+                "slug": "gpt-6.1-sol",
+                "display_name": "Sol",
+                "use_responses_lite": True,
+                "base_instructions": "Native Codex instructions",
+            },
+            {"slug": "gpt-5.6-sol", "base_instructions": "Legacy instructions"},
         ],
         "catalog_version": "test",
     }

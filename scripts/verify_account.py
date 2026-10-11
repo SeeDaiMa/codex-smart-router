@@ -154,7 +154,7 @@ def main():
         report["auto_in_catalog"] = "smart-auto" in slugs
         report["account_models_preserved"] = "gpt-6.1-sol" in slugs
         report["routing_models_available"] = {
-            model: model in slugs for model in ("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra")
+            model: model in slugs for model in app.state.router.engine.models
         }
         if not report["auto_in_catalog"]:
             report["catalog_error"] = "The refreshed catalog did not include Auto"

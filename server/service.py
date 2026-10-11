@@ -40,22 +40,15 @@ class RouterService:
     async def preview(self, task: str, project_root: str | None = None) -> RoutePreview:
         project = await asyncio.to_thread(self.analyzer.analyze, project_root)
         analysis = heuristic_analysis(task, project)
+        heuristic = analysis.model_copy()
+        allow_simple = analysis.complexity == 1 and analysis.risk == "low"
         decision = self.engine.hard_rule(task, project)
         status = "disabled"
         if decision:
             status = "skipped"
-            if decision.model == "gpt-6-astra":
-                analysis.complexity = 5 if decision.rule_id == "architecture" else 4
-                analysis.risk = "medium" if decision.rule_id == "architecture" else "high"
-                if decision.rule_id == "architecture":
-                    analysis.category = "architecture"
-                elif decision.rule_id == "authorization-security":
-                    analysis.category = "security"
-                elif analysis.category in {"style", "documentation"}:
-                    analysis.category = "implementation"
             analysis.recommended_reasoning = decision.reasoning
         else:
-            if self.settings.classifier_enabled:
+            if self.settings.classifier_enabled and analysis.risk != "high":
                 key = self.settings.upstream_api_key
                 classified = (
                     await self.classifier.classify(
@@ -66,13 +59,20 @@ class RouterService:
                 )
                 if classified:
                     analysis = classified
-                    if project.risk == "medium" and analysis.risk == "low":
+                    # A classifier cannot weaken locally detected task/context risk.
+                    if heuristic.risk == "high":
+                        analysis.risk = "high"
+                    elif heuristic.risk == "medium" and analysis.risk == "low":
                         analysis.risk = "medium"
                         analysis.complexity = max(3, analysis.complexity)
                     status = "used"
                 else:
                     status = "fallback"
-            decision = self.engine.decide(analysis, classified=status == "used")
+            elif self.settings.classifier_enabled:
+                status = "skipped"
+            decision = self.engine.decide(
+                analysis, classified=status == "used", allow_simple=allow_simple
+            )
         return RoutePreview(
             analysis=analysis, project=project, decision=decision, classifier_status=status
         )

@@ -52,10 +52,11 @@ def test_scan_limits_and_node_modules_are_observed(tmp_path):
 
 def test_git_status_is_read_only_and_detects_high_risk_diff(tmp_path):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    (tmp_path / "Invoice.trigger").write_text("trigger Invoice on Account(before insert) {}")
+    (tmp_path / "migrations").mkdir()
+    (tmp_path / "migrations" / "001.sql").write_text("CREATE TABLE example (id INT);")
     context = ProjectAnalyzer([tmp_path], 100).analyze(str(tmp_path))
     assert context.files_changed == 1
-    assert context.changed_paths == ["Invoice.trigger"]
+    assert context.changed_paths == ["migrations/001.sql"]
     assert context.risk == "high"
     assert not (tmp_path / ".git" / "index.lock").exists()
 
@@ -63,3 +64,18 @@ def test_git_status_is_read_only_and_detects_high_risk_diff(tmp_path):
 def test_porcelain_rename_and_spaces():
     paths = git_changed_paths(b"R  new file.cls\0old file.cls\0 M second.css\0?? third.js\0")
     assert paths == ["new file.cls", "second.css", "third.js"]
+
+
+@pytest.mark.parametrize("suffix", [".cls", ".trigger", ".py", ".go", ".rs", ".unknown"])
+def test_source_extension_alone_does_not_raise_risk(tmp_path, suffix):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ("sample" + suffix)).write_text("test")
+    assert ProjectAnalyzer([tmp_path], 100).analyze(str(tmp_path)).risk == "low"
+
+
+@pytest.mark.parametrize("count,risk", [(9, "low"), (10, "medium"), (20, "high")])
+def test_change_scope_uses_same_threshold_for_any_project(tmp_path, count, risk):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for index in range(count):
+        (tmp_path / f"file{index}.unknown").write_text("test")
+    assert ProjectAnalyzer([tmp_path], 100).analyze(str(tmp_path)).risk == risk

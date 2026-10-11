@@ -4,7 +4,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from router.types import Effort, ProjectContext, Risk, RouteDecision, TaskAnalysis
+from router.types import Category, Effort, ProjectContext, Risk, RouteDecision, TaskAnalysis
 
 
 class ModelSpec(BaseModel):
@@ -48,10 +48,27 @@ class DefaultRoute(BaseModel):
     reasoning: Effort
 
 
+class SimpleRoute(DefaultRoute):
+    enabled: bool = True
+    max_complexity: int = Field(default=1, ge=1, le=2)
+    categories: list[Category] = Field(
+        default_factory=lambda: ["style", "documentation", "transformation"]
+    )
+
+
+class RoutingTiers(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    high_risk: DefaultRoute
+    architecture: DefaultRoute
+    complex: DefaultRoute
+    simple: SimpleRoute
+
+
 class RuleFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     default: DefaultRoute
-    rules: list[Rule]
+    tiers: RoutingTiers
+    rules: list[Rule] = Field(default_factory=list)
 
 
 class DecisionEngine:
@@ -62,21 +79,19 @@ class DecisionEngine:
         }
         rules = RuleFile.model_validate(yaml.safe_load(rules_file.read_text()))
         self.default = rules.default
+        self.tiers = rules.tiers
         self.rules = sorted(rules.rules, key=lambda rule: rule.priority, reverse=True)
         if len({rule.id for rule in self.rules}) != len(self.rules):
             raise ValueError("Rule ids must be unique")
-        for route in [self.default, *self.rules]:
-            self.validate_route(route.model, route.reasoning)
-        # Heuristic and classifier tiers are also validated at startup.
-        for model, effort in [
-            ("gpt-6-astra", "high"),
-            ("gpt-6-astra", "xhigh"),
-            ("gpt-5.6-sol", "medium"),
-            ("gpt-5.6-sol", "high"),
-            ("gpt-5.6-terra", "low"),
-            ("gpt-5.6-terra", "medium"),
+        for route in [
+            self.default,
+            self.tiers.high_risk,
+            self.tiers.architecture,
+            self.tiers.complex,
+            self.tiers.simple,
+            *self.rules,
         ]:
-            self.validate_route(model, effort)
+            self.validate_route(route.model, route.reasoning)
 
     def validate_route(self, model: str, reasoning: str) -> None:
         if model not in self.models or reasoning not in self.models[model].supported_reasoning:
@@ -94,19 +109,28 @@ class DecisionEngine:
                 )
         return None
 
-    def decide(self, analysis: TaskAnalysis, *, classified: bool = False) -> RouteDecision:
+    def decide(
+        self, analysis: TaskAnalysis, *, classified: bool = False, allow_simple: bool = True
+    ) -> RouteDecision:
         source = "classifier" if classified else "heuristic"
         if analysis.risk == "high" or analysis.category == "security":
-            model, effort = "gpt-6-astra", "high"
+            route = self.tiers.high_risk
         elif analysis.category == "architecture" or analysis.complexity == 5:
-            model, effort = "gpt-6-astra", "xhigh"
+            route = self.tiers.architecture
         elif analysis.complexity >= 4:
-            model, effort = "gpt-5.6-sol", "high"
-        elif analysis.complexity <= 2 and analysis.risk == "low":
-            model = "gpt-5.6-terra"
-            effort = "low" if analysis.complexity == 1 else "medium"
+            route = self.tiers.complex
+        elif (
+            self.tiers.simple.enabled
+            and allow_simple
+            and analysis.complexity <= self.tiers.simple.max_complexity
+            and analysis.category in self.tiers.simple.categories
+            and analysis.risk == "low"
+            and analysis.recommended_reasoning in {"none", "low"}
+        ):
+            route = self.tiers.simple
         else:
-            model, effort = self.default.model, self.default.reasoning
+            route = self.default
+        model, effort = route.model, route.reasoning
         # The classifier cannot request an unsupported level or weaken a tier's minimum.
         order = ["none", "low", "medium", "high", "xhigh", "max"]
         if classified and order.index(analysis.recommended_reasoning) > order.index(effort):

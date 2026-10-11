@@ -4,14 +4,25 @@ from pydantic import BaseModel, ConfigDict, Field
 
 Effort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 Risk = Literal["low", "medium", "high"]
+Category = Literal[
+    "style",
+    "documentation",
+    "transformation",
+    "implementation",
+    "debugging",
+    "architecture",
+    "security",
+    "explanation",
+    "research",
+    "planning",
+    "general",
+]
 
 
 class TaskAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    category: Literal[
-        "style", "documentation", "implementation", "debugging", "architecture", "security"
-    ]
+    category: Category
     complexity: int = Field(ge=1, le=5)
     risk: Risk
     technology: list[str]

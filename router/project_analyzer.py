@@ -7,13 +7,12 @@ from router.types import ProjectContext
 
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "target", "build", "dist", ".next", ".run"}
 RISK_MARKERS = (
-    "permissionset",
-    "profiles/",
-    "sharingrules",
-    "sharing",
+    "permissions/",
     "authorization",
     "auth/",
     "migrations/",
+    "schema/",
+    "security/",
 )
 
 
@@ -98,6 +97,14 @@ class ProjectAnalyzer:
                     descriptor = self._small_text(file)
                     if "spring-boot" in descriptor or "org.springframework.boot" in descriptor:
                         stack.add("spring-boot")
+                if name in {"pyproject.toml", "requirements.txt", "setup.py"}:
+                    stack.add("python")
+                if name == "Cargo.toml":
+                    stack.add("rust")
+                if name == "go.mod":
+                    stack.add("go")
+                if file.suffix in {".csproj", ".fsproj"}:
+                    stack.add("dotnet")
             if count > self.max_files:
                 break
         project = ProjectContext(
@@ -107,16 +114,13 @@ class ProjectAnalyzer:
         if (
             project.risk == "high"
             or any(
-                changed.casefold().endswith(".trigger")
-                or any(marker in changed.casefold() for marker in RISK_MARKERS)
+                any(marker in changed.casefold() for marker in RISK_MARKERS)
                 for changed in project.changed_paths
             )
-            or sum(name.casefold().endswith(".cls") for name in project.changed_paths) >= 10
+            or project.files_changed >= 20
         ):
             project.risk = "high"
-        elif project.files_changed >= 10 or any(
-            name.endswith(".cls") for name in project.changed_paths
-        ):
+        elif project.files_changed >= 10:
             project.risk = "medium"
         return project
 

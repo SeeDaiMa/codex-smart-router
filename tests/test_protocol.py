@@ -60,20 +60,23 @@ def test_full_responses_payload_is_preserved_and_credentials_are_separate(harnes
         "text": {"verbosity": "low"},
         "metadata": {"smart_router_project_root": "/unscanned", "owner": "example"},
     }
-    with harness() as (client, requests, _):
+    with harness() as (client, requests, app):
         response = client.post(
             "/v1/responses", headers={**AUTH, "OpenAI-Organization": "private"}, json=body
         )
         assert response.status_code == 200
         forwarded = json.loads(requests[0].content)
-        assert forwarded["model"] == "gpt-6-astra"
-        assert forwarded["reasoning"] == {"effort": "high", "summary": "auto"}
+        assert forwarded["model"] == "gpt-6.1-sol"
+        assert forwarded["reasoning"] == {
+            "effort": app.state.router.engine.tiers.high_risk.reasoning,
+            "summary": "auto",
+        }
         assert forwarded["metadata"] == {"owner": "example"}
         for key in ("input", "tools", "include", "store", "instructions", "text"):
             assert forwarded[key] == body[key]
         assert requests[0].headers["authorization"] == "Bearer " + UPSTREAM_TOKEN
         assert "openai-organization" not in requests[0].headers
-        assert response.headers["x-smart-router-model"] == "gpt-6-astra"
+        assert response.headers["x-smart-router-model"] == "gpt-6.1-sol"
 
 
 def test_codex_environment_and_agents_are_not_the_task(harness):
@@ -99,7 +102,7 @@ def test_codex_environment_and_agents_are_not_the_task(harness):
             },
         )
         assert response.status_code == 200
-        assert json.loads(requests[0].content)["model"] == "gpt-5.6-terra"
+        assert json.loads(requests[0].content)["model"] == "gpt-6-luna"
 
 
 def test_sse_is_byte_exact_and_continuation_uses_pinned_model(harness):
@@ -143,7 +146,7 @@ def test_sse_is_byte_exact_and_continuation_uses_pinned_model(harness):
             },
         )
         assert followup.status_code == 200
-        assert json.loads(requests[-1].content)["model"] == "gpt-6-astra"
+        assert json.loads(requests[-1].content)["model"] == "gpt-6.1-sol"
         assert json.loads(requests[-1].content)["input"] == [output]
 
 
@@ -167,7 +170,7 @@ def test_full_transcript_continues_without_reclassifying_tool_output(harness):
             },
         )
         assert response.status_code == 200
-        assert json.loads(requests[-1].content)["model"] == "gpt-6-astra"
+        assert json.loads(requests[-1].content)["model"] == "gpt-6.1-sol"
         assert response.headers["x-smart-router-source"] == "continuation"
         transcript.append({"role": "user", "content": "继续完善页面"})
         assert (
@@ -250,7 +253,7 @@ def test_stream_disconnect_reports_error_without_replay(harness):
 
 
 def test_compaction_keeps_model_without_injecting_reasoning(harness):
-    original = {"role": "user", "content": "修改 CSS"}
+    original = {"role": "user", "content": "修改 CSS 按钮间距"}
     with harness() as (client, requests, _):
         client.post(
             "/v1/responses", headers=AUTH, json={"model": "smart-auto", "input": [original]}
@@ -266,7 +269,7 @@ def test_compaction_keeps_model_without_injecting_reasoning(harness):
         )
         assert response.status_code == 200
         assert requests[-1].url.path == "/v1/responses/compact"
-        assert json.loads(requests[-1].content)["model"] == "gpt-5.6-terra"
+        assert json.loads(requests[-1].content)["model"] == "gpt-6-luna"
         assert "reasoning" not in json.loads(requests[-1].content)
 
 

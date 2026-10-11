@@ -1,52 +1,24 @@
-# Highest priority wins. Hard rules run before any model-based classifier.
+# General task policy. No project, framework, or business-specific rules are required.
 default:
-  model: gpt-5.6-sol
-  reasoning: medium
-rules:
-  - id: authorization-security
-    priority: 100
-    any_keywords:
-      - authorization chain
-      - authorizationchain
-      - 授权链
-      - 授权模型
-      - 授权模式
-      - 权限
-      - sharing
-      - permission
-      - authentication
-      - 认证
-      - passkey
-      - webauthn
-      - security
-      - 安全
-    model: gpt-6-astra
-    reasoning: high
-  - id: apex-trigger
-    priority: 95
-    any_keywords: [apex trigger, apex_trigger, .trigger, 触发器]
-    any_changed_suffixes: [.trigger]
-    model: gpt-6-astra
-    reasoning: high
-  - id: payment-and-data-integrity
-    priority: 90
-    any_keywords: [支付回调, payment webhook, stripe webhook, webhook, 幂等, idempotency, 数据迁移, schema migration, 事务, transaction, 并发, concurrency]
-    model: gpt-6-astra
-    reasoning: high
-  - id: risky-project-diff
-    priority: 85
-    project_risk: high
-    model: gpt-6-astra
-    reasoning: high
-  - id: architecture
-    priority: 80
-    any_keywords: [架构, architecture, 系统设计, system design, 跨模块重构]
-    model: gpt-6-astra
+  model: gpt-6.1-sol
+  reasoning: high
+# These routes also apply to heuristic/classifier decisions; no model names are hardcoded.
+tiers:
+  high_risk:
+    model: gpt-6.1-sol
     reasoning: xhigh
-  - id: salesforce-apex
-    priority: 60
-    any_keywords: [apex, .cls, soql, governor limit, 批处理]
-    any_changed_suffixes: [.cls]
-    model: gpt-5.6-sol
-    reasoning: high
+  architecture:
+    model: gpt-6.1-sol
+    reasoning: max
+  complex:
+    model: gpt-6.1-sol
+    reasoning: xhigh
+  simple:
+    model: gpt-6-luna
+    reasoning: xhigh
+    enabled: true
+    max_complexity: 1
+    categories: [style, documentation, transformation]
 
+# Optional local overrides. Leave empty for project-independent routing.
+rules: []

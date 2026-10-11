@@ -189,7 +189,7 @@ def main():
     async def native_models():
         catalog_calls.append(True)
         model = json.loads((ROOT / "config" / "codex-models.json").read_text())["models"][0]
-        return {"models": [{**model, "slug": "gpt-5.6-sol", "display_name": "Sol"}]}
+        return {"models": [{**model, "slug": "gpt-6.1-sol", "display_name": "Sol"}]}
 
     @fake.post("/v1/responses")
     async def respond(request: Request):
@@ -321,7 +321,7 @@ def main():
         ]
         for key, value in config.items():
             command.extend(["-c", key + "=" + json.dumps(value)])
-        command.append("修改 Salesforce Authorization Chain。本次仅查看当前目录，然后报告结果。")
+        command.append("修改访问权限校验。本次仅查看当前目录，然后报告结果。")
         cli_environment = {**os.environ, "SMART_ROUTER_API_KEY": router_key}
         result = subprocess.run(
             command,
@@ -354,7 +354,7 @@ def main():
         if result.returncode or not report["marker_received"] or not report["tool_round_trip"]:
             print(result.stderr[-6000:], file=sys.stderr)
             return 1
-        if report["models"] != ["gpt-6-astra", "gpt-6-astra"]:
+        if report["models"] != ["gpt-6.1-sol", "gpt-6.1-sol"]:
             return 1
         if args.account_auth and not catalog_calls:
             return 1

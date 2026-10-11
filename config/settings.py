@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     upstream_timeout_seconds: float = Field(default=300, gt=0, le=3600)
     classifier_timeout_seconds: float = Field(default=8, gt=0, le=60)
     classifier_enabled: bool = False
-    classifier_model: str = "gpt-5.6-terra"
+    classifier_model: str = "gpt-6-luna"
     project_roots: list[Path] = Field(default_factory=list)
     rules_file: Path = PROJECT_DIR / "router" / "rules.yaml"
     models_file: Path = PROJECT_DIR / "providers" / "models.yaml"

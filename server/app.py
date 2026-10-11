@@ -356,7 +356,11 @@ def create_app(
                     if isinstance(model, dict) and model.get("slug") != "smart-auto"
                 ]
                 template = next(
-                    (model for model in native_models if model.get("slug") == "gpt-5.6-sol"),
+                    (
+                        model
+                        for model in native_models
+                        if model.get("slug") == request.app.state.router.engine.default.model
+                    ),
                     None,
                 )
                 if template and template.get("base_instructions"):
