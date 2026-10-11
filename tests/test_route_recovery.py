@@ -99,7 +99,7 @@ def test_compaction_session_survives_restart_and_directory_change(
             "content": "<environment_context><cwd>/different</cwd></environment_context>",
         },
         {"type": "compaction", "encrypted_content": "not-seen-before"},
-        {"role": "user", "content": "继续修改权限"},
+        {"role": "user", "content": "继续"},
     ]
     with harness(route_state_file=path) as (client, requests, _):
         followup = client.post("/v1/responses", headers=headers, json=body)
@@ -131,7 +131,7 @@ def test_compaction_output_recovers_route_without_original_task_or_session(harne
             headers=AUTH,
             json={
                 "model": "smart-auto",
-                "input": [compacted, {"role": "user", "content": "修改访问权限"}],
+                "input": [compacted, {"role": "user", "content": "继续"}],
             },
         )
         assert response.status_code == 200
@@ -145,7 +145,7 @@ def test_old_unrecorded_transcript_recovers_from_original_task_and_pins_it(harne
     opaque = {"type": "reasoning", "encrypted_content": "private-encrypted-history"}
     output = {"type": "function_call_output", "call_id": "call_old", "output": "css-only"}
     followup = {"role": "user", "content": "修改 CSS 按钮间距"}
-    body = {"model": "smart-auto", "input": [original, opaque, output, followup]}
+    body = {"model": "smart-auto", "input": [original, opaque, followup, output]}
     with harness(route_state_file=path, classifier_enabled=True) as (client, requests, app):
         response = client.post("/v1/responses", headers=AUTH, json=body)
         assert response.status_code == 200
@@ -156,7 +156,7 @@ def test_old_unrecorded_transcript_recovers_from_original_task_and_pins_it(harne
         assert forwarded["model"] == app.state.router.engine.tiers.high_risk.model
         assert forwarded["reasoning"]["effort"] == app.state.router.engine.tiers.high_risk.reasoning
     with harness(route_state_file=path) as (client, _, _):
-        body["input"] = [opaque, followup]  # Original task no longer supplied.
+        body["input"] = [followup, opaque, output]  # Original task no longer supplied.
         response = client.post("/v1/responses", headers=AUTH, json=body)
         assert response.status_code == 200
         assert response.headers["x-smart-router-source"] == "continuation"
@@ -184,7 +184,7 @@ def test_route_state_is_account_scoped_and_survives_token_refresh(harness, tmp_p
         assert first.status_code == 200
     body["input"] = [
         {"type": "reasoning", "encrypted_content": "opaque"},
-        {"role": "user", "content": "修改访问权限校验"},
+        {"role": "user", "content": "继续"},
     ]
     with harness(auth_mode="chatgpt", route_state_file=path) as (client, requests, _):
         refreshed = {**ACCOUNT_AUTH, **session, "Authorization": "Bearer refreshed-token"}
@@ -193,6 +193,10 @@ def test_route_state_is_account_scoped_and_survives_token_refresh(harness, tmp_p
         assert continuation.headers["x-smart-router-source"] == "continuation"
         assert json.loads(requests[-1].content)["model"] == first.headers["x-smart-router-model"]
         other = {**ACCOUNT_AUTH, **session, "ChatGPT-Account-ID": "different-account"}
+        body["input"] = [
+            {"role": "user", "content": "修改访问权限校验"},
+            {"type": "reasoning", "encrypted_content": "different-account-history"},
+        ]
         recovered = client.post("/backend-api/codex/responses", headers=other, json=body)
         assert recovered.status_code == 200
         assert recovered.headers["x-smart-router-source"] == "recovery"
@@ -259,7 +263,7 @@ def test_followup_text_does_not_pin_an_unrelated_old_conversation(harness, tmp_p
             },
         )
         assert response.status_code == 200
-        small_model = json.loads(requests[-1].content)["model"]
+        assert json.loads(requests[-1].content)["model"] == "gpt-6.1-sol"
         unrelated = client.post(
             "/v1/responses",
             headers=AUTH,
@@ -267,11 +271,11 @@ def test_followup_text_does_not_pin_an_unrelated_old_conversation(harness, tmp_p
                 "model": "smart-auto",
                 "input": [
                     {"role": "user", "content": "修改访问权限校验"},
-                    {"type": "reasoning", "encrypted_content": "unrelated-history"},
                     {"role": "user", "content": "修改 CSS 按钮间距"},
+                    {"type": "reasoning", "encrypted_content": "unrelated-history"},
                 ],
             },
         )
         assert unrelated.status_code == 200
         assert unrelated.headers["x-smart-router-source"] == "recovery"
-        assert json.loads(requests[-1].content)["model"] != small_model
+        assert json.loads(requests[-1].content)["model"] == "gpt-6.1-sol"

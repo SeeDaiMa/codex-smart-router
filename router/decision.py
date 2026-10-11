@@ -50,10 +50,9 @@ class DefaultRoute(BaseModel):
 
 class SimpleRoute(DefaultRoute):
     enabled: bool = True
-    max_complexity: int = Field(default=1, ge=1, le=2)
-    categories: list[Category] = Field(
-        default_factory=lambda: ["style", "documentation", "transformation"]
-    )
+    max_complexity: int = Field(default=2, ge=1, le=2)
+    # Optional compatibility override. By default complexity, not category, selects the tier.
+    categories: list[Category] = Field(default_factory=list)
 
 
 class RoutingTiers(BaseModel):
@@ -123,7 +122,10 @@ class DecisionEngine:
             self.tiers.simple.enabled
             and allow_simple
             and analysis.complexity <= self.tiers.simple.max_complexity
-            and analysis.category in self.tiers.simple.categories
+            and (
+                not self.tiers.simple.categories
+                or analysis.category in self.tiers.simple.categories
+            )
             and analysis.risk == "low"
             and analysis.recommended_reasoning in {"none", "low"}
         ):
@@ -133,6 +135,10 @@ class DecisionEngine:
         model, effort = route.model, route.reasoning
         # The classifier cannot request an unsupported level or weaken a tier's minimum.
         order = ["none", "low", "medium", "high", "xhigh", "max"]
+        if analysis.complexity == 5 and order.index(
+            self.tiers.architecture.reasoning
+        ) > order.index(effort):
+            effort = self.tiers.architecture.reasoning
         if classified and order.index(analysis.recommended_reasoning) > order.index(effort):
             effort = analysis.recommended_reasoning
         self.validate_route(model, effort)

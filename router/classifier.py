@@ -51,6 +51,23 @@ def heuristic_analysis(task: str, project: ProjectContext) -> TaskAnalysis:
             "error",
             "crash",
             "递归问题",
+            "冲突",
+            "审查",
+            "代码审计",
+            "conflict",
+            "conflicts",
+            "review",
+            "audit",
+            "深入分析",
+            "全面分析",
+            "调用链",
+            "根因",
+            "性能瓶颈",
+            "端到端",
+            "in-depth",
+            "root cause",
+            "call chain",
+            "end-to-end",
         ),
     )
     style = contains(
@@ -101,6 +118,42 @@ def heuristic_analysis(task: str, project: ProjectContext) -> TaskAnalysis:
             "convert to",
         ),
     )
+    operation = bool(
+        re.search(r"\bgit\s+(?:commit|status|diff|log|add)\b", text)
+        or re.search(r"\bcommit(?:\s+(?:the|current|these|staged|my))?\s+changes\b", text)
+        or re.search(r"(?:提交|暂存).*(?:git|改动|修改|变更|代码)", text)
+        or re.search(r"git.*(?:提交|状态|日志|差异)", text)
+        or contains(
+            text,
+            (
+                "运行测试",
+                "执行测试",
+                "运行单元测试",
+                "执行单元测试",
+                "运行构建",
+                "执行构建",
+                "run tests",
+                "run the tests",
+                "run unit tests",
+                "run the build",
+                "npm test",
+                "npm run build",
+                "pytest",
+            ),
+        )
+    )
+    mechanical_change = contains(
+        text,
+        (
+            "重命名变量",
+            "修改变量名",
+            "修改常量",
+            "调整常量",
+            "rename variable",
+            "rename a variable",
+            "change a constant",
+        ),
+    )
     focused = (
         contains(
             text,
@@ -122,6 +175,8 @@ def heuristic_analysis(task: str, project: ProjectContext) -> TaskAnalysis:
             ),
         )
         or transformation
+        or operation
+        or mechanical_change
     )
     broad = contains(
         text,
@@ -168,6 +223,24 @@ def heuristic_analysis(task: str, project: ProjectContext) -> TaskAnalysis:
             "deploy",
             "production",
             "delete",
+            "拆分",
+            "挑选",
+            "选择",
+            "修复",
+            "修好",
+            "测试并",
+            "测试后",
+            "审查",
+            "检查改动",
+            "检查修改",
+            "check changes",
+            "check the changes",
+            "split",
+            "select",
+            "fix",
+            "review",
+            "检查变更",
+            "check modifications",
         ),
     )
     sensitive = contains(
@@ -205,6 +278,18 @@ def heuristic_analysis(task: str, project: ProjectContext) -> TaskAnalysis:
             "transaction",
             "concurrency",
             "irreversible",
+            "强制推送",
+            "改写历史",
+            "重写历史",
+            "丢弃改动",
+            "清空工作区",
+            "回滚",
+            "rebase",
+            "cherry-pick",
+            "force push",
+            "reset",
+            "clean",
+            "amend",
         ),
     )
     # Narrow text edits can mention sensitive topics without changing behavior.
@@ -219,6 +304,10 @@ def heuristic_analysis(task: str, project: ProjectContext) -> TaskAnalysis:
         category = "style"
     elif documentation:
         category = "documentation"
+    elif operation:
+        category = "operation"
+    elif mechanical_change:
+        category = "implementation"
     elif contains(text, ("解释", "说明", "explain", "explanation")):
         category = "explanation"
     elif contains(text, ("研究", "调查", "对比", "research", "investigate", "compare")):
@@ -227,8 +316,10 @@ def heuristic_analysis(task: str, project: ProjectContext) -> TaskAnalysis:
         category = "planning"
     elif contains(text, ("修改", "新增", "实现", "增加", "implement", "add", "modify")):
         category = "implementation"
-    if category in {"style", "documentation", "transformation"} and narrow:
-        complexity, risk, effort = 1, "low", "low"
+    if focused and narrow and not (architecture or debugging):
+        complexity, risk, effort = 2 if mechanical_change else 1, "low", "low"
+    if re.search(r"\bgit\s+push\b.*(?:--force(?:-with-lease)?|-f)\b", text):
+        sensitive = True
     if sensitive and not (narrow and category in {"documentation", "transformation"}):
         category, complexity, risk, effort = "security", max(complexity, 4), "high", "high"
     if not task.strip() or len(task) > 8000:

@@ -48,7 +48,7 @@ class RouterService:
         project = await asyncio.to_thread(self.analyzer.analyze, project_root)
         analysis = heuristic_analysis(task, project)
         heuristic = analysis.model_copy()
-        allow_simple = analysis.complexity == 1 and analysis.risk == "low"
+        allow_simple = analysis.complexity <= 2 and analysis.risk == "low"
         decision = self.engine.hard_rule(task, project)
         status = "disabled"
         if decision:
@@ -104,7 +104,9 @@ class RouterService:
         scope = self.route_scope(headers)
         self.cache.put_many([scope + key for key in keys], decision)
 
-    async def resolve(self, body: dict[str, Any], headers: dict[str, str]) -> RouteDecision:
+    async def resolve(
+        self, body: dict[str, Any], headers: dict[str, str], *, new_tasks: bool = True
+    ) -> RouteDecision:
         context = extract_context(body)
         scope = self.route_scope(headers)
         session_id = next(
@@ -119,16 +121,18 @@ class RouterService:
             "session:" + hashlib.sha256(session_id.encode()).hexdigest() if session_id else None
         )
         task_key = context.task_key(session_id)
+        turn_key = context.turn_key(session_id)
         history = history_keys(body.get("input"))
 
         def remember(decision: RouteDecision) -> RouteDecision:
-            keys = [*history]
+            keys = [*context.active_history]
             # A followup's text is not a new chain identity. Persisting it as a
             # task route can attach a different chat with that text to this model.
             if context.task and not (
                 body.get("previous_response_id")
                 or context.has_tool_history
                 or context.has_opaque_history
+                or len(context.tasks) > 1
             ):
                 keys.append(task_key)
             if session_key:
@@ -147,7 +151,34 @@ class RouterService:
                     reason="Preserve the model and reasoning selected in Codex",
                 )
             )
+        # A new user task is a routing boundary; historical tools/reasoning are
+        # preserved but must not force that task onto the previous task's model.
+        # A tool result, compact request or pending tool call is not a boundary.
+        if new_tasks and context.task:
+            cached_turn = self.cache.get(scope + turn_key)
+            if cached_turn and context.new_user_turn:
+                return remember(cached_turn.model_copy(update={"source": "continuation"}))
+            if context.new_user_turn:
+                analysis = heuristic_analysis(context.task, ProjectContext())
+                # Short approvals and vague followups need the previous task's
+                # route. An explicit task (including Git commit) can be selected anew.
+                if analysis.category != "general" or not (
+                    body.get("previous_response_id")
+                    or history
+                    or len(context.tasks) > 1
+                    or (session_key and self.cache.get(scope + session_key))
+                ):
+                    preview = await self.preview(context.task, context.project_root)
+                    self.cache.put(scope + turn_key, preview.decision)
+                    return remember(preview.decision)
         previous = body.get("previous_response_id")
+        if context.task and (not context.new_user_turn or not new_tasks):
+            # Full transcripts identify the active turn even when a client
+            # carries an older response ID or a session has another branch.
+            for key in [*reversed(context.active_history), turn_key]:
+                cached = self.cache.get(scope + key)
+                if cached:
+                    return remember(cached.model_copy(update={"source": "continuation"}))
         if previous:
             cached = self.cache.get(scope + "response:" + previous)
             if cached:
@@ -156,9 +187,12 @@ class RouterService:
         if continuation:
             # Opaque and tool IDs remain usable when compact drops the original task
             # or resume changes a session header/project directory.
-            lookup = list(reversed(history))
+            lookup = list(reversed(context.active_history))
+            if context.task:
+                lookup.append(turn_key)
             if session_key:
                 lookup.append(session_key)
+            lookup.extend(reversed(history))
             # Only the original task may identify a pre-existing chain. Later
             # user messages can match entirely unrelated conversations.
             lookup.extend(context.task_key(session_id, task) for task in context.tasks[:1])
@@ -188,6 +222,10 @@ class RouterService:
                 decision.reasoning,
             )
             return remember(decision.model_copy(update={"source": "recovery"}))
+        if context.new_user_turn and session_key:
+            cached = self.cache.get(scope + session_key)
+            if cached and heuristic_analysis(context.task, ProjectContext()).category == "general":
+                return remember(cached.model_copy(update={"source": "continuation"}))
         cached = self.cache.get(scope + task_key)
         if cached:
             return remember(cached.model_copy(update={"source": "continuation"}))

@@ -11,6 +11,34 @@ import httpx
 from providers.upstream import chatgpt_headers, response_headers
 
 
+def auto_context_limits(auto: dict, native_models: list[dict], route_models) -> dict:
+    """Keep Auto within every configured model's advertised context limits."""
+    native = {model.get("slug"): model for model in native_models}
+    baseline = auto["context_window"]
+    windows, maxima, percentages = [], [], []
+    for slug in route_models:
+        model = native.get(slug, {})
+        window = model.get("context_window")
+        if type(window) is not int or window <= 0:
+            window = baseline
+        maximum = model.get("max_context_window")
+        if type(maximum) is not int or maximum < window:
+            maximum = window
+        percent = model.get("effective_context_window_percent")
+        if type(percent) is not int or not 1 <= percent <= 100:
+            percent = auto["effective_context_window_percent"]
+        windows.append(window)
+        maxima.append(maximum)
+        percentages.append(percent)
+    if not windows:
+        return {}
+    return {
+        "context_window": min(windows),
+        "max_context_window": min(maxima),
+        "effective_context_window_percent": min(percentages),
+    }
+
+
 class AccountCatalog:
     def __init__(self, client: httpx.AsyncClient, ttl: float = 300, capacity: int = 8):
         self.client = client

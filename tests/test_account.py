@@ -105,6 +105,56 @@ def test_account_auth_and_local_preview_use_separate_credentials(harness):
         assert not requests
 
 
+@pytest.mark.parametrize(
+    ("luna_metadata", "expected_max", "expected_percent"),
+    [
+        (
+            {
+                "context_window": 272000,
+                "max_context_window": 872000,
+                "effective_context_window_percent": 95,
+            },
+            872000,
+            95,
+        ),
+        (
+            {
+                "context_window": 272000,
+                "max_context_window": 400000,
+                "effective_context_window_percent": 90,
+            },
+            400000,
+            90,
+        ),
+        ({"context_window": 272000}, 272000, 95),
+        (None, 272000, 95),
+    ],
+)
+def test_auto_context_respects_all_configured_models(
+    harness, luna_metadata, expected_max, expected_percent
+):
+    sol = {
+        "slug": "gpt-6.1-sol",
+        "context_window": 272000,
+        "max_context_window": 872000,
+        "effective_context_window_percent": 95,
+    }
+    models = [sol]
+    if luna_metadata is not None:
+        models.append({"slug": "gpt-6-luna", **luna_metadata})
+    # A smaller manual-only model must not constrain Auto.
+    models.append({"slug": "gpt-5.5", "context_window": 128000})
+    with harness(
+        lambda _: httpx.Response(200, json={"models": models}), auth_mode="chatgpt"
+    ) as (client, _, _):
+        catalog = client.get("/backend-api/codex/models", headers=ACCOUNT_AUTH).json()
+        auto = catalog["models"][0]
+        assert auto["context_window"] == 272000
+        assert auto["max_context_window"] == expected_max
+        assert auto["effective_context_window_percent"] == expected_percent
+        assert catalog["models"][1]["max_context_window"] == sol["max_context_window"]
+
+
 def test_backend_account_error_and_quota_headers_are_preserved(harness):
     error = {"error": {"message": "account limit reached"}}
     with harness(

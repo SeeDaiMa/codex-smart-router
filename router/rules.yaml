@@ -17,8 +17,7 @@ tiers:
     model: gpt-6-luna
     reasoning: xhigh
     enabled: true
-    max_complexity: 1
-    categories: [style, documentation, transformation]
+    max_complexity: 2
 
 # Optional local overrides. Leave empty for project-independent routing.
 rules: []

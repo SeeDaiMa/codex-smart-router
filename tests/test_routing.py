@@ -33,6 +33,25 @@ from tests.conftest import AUTH
         ("研究三种部署方案", "default"),
         ("规划一次团队活动", "default"),
         ("这个未知工具需要改进", "default"),
+        ("提交 Git", "simple"),
+        ("帮我提交 Git", "simple"),
+        ("git commit", "simple"),
+        ("把当前改动提交到 Git", "simple"),
+        ("查看 git status", "simple"),
+        ("git diff", "simple"),
+        ("运行单元测试", "simple"),
+        ("执行构建", "simple"),
+        ("重命名变量", "simple"),
+        ("审查当前改动后提交 Git", "complex"),
+        ("解决 Git 冲突后提交", "complex"),
+        ("拆分当前改动成多个 Git 提交", "default"),
+        ("提交 Git 并部署生产环境", "default"),
+        ("git reset --hard", "high_risk"),
+        ("git push --force", "high_risk"),
+        ("git push -f", "high_risk"),
+        ("git commit --amend", "high_risk"),
+        ("git rebase main", "high_risk"),
+        ("深入分析这段代码", "complex"),
     ],
 )
 def test_representative_tasks(harness, task, tier):
@@ -174,6 +193,33 @@ def test_simple_tier_can_be_disabled(harness, tmp_path):
             policy["default"]["model"],
             policy["default"]["reasoning"],
         )
+
+
+def test_simple_tier_uses_complexity_instead_of_category(harness):
+    with harness() as (client, _, _):
+        result = client.post("/v1/route", headers=AUTH, json={"task": "重命名变量"}).json()
+        assert result["analysis"]["category"] == "implementation"
+        assert result["analysis"]["complexity"] == 2
+        assert result["decision"]["model"] == "gpt-6-luna"
+
+
+def test_high_risk_architecture_keeps_maximum_complexity_effort(harness):
+    with harness() as (client, _, _):
+        result = client.post("/v1/route", headers=AUTH, json={"task": "设计权限系统架构"}).json()
+        assert result["analysis"]["complexity"] == 5
+        assert result["analysis"]["risk"] == "high"
+        assert result["decision"]["model"] == "gpt-6.1-sol"
+        assert result["decision"]["reasoning"] == "max"
+
+
+def test_optional_category_filter_is_preserved(harness, tmp_path):
+    policy = yaml.safe_load((PROJECT_DIR / "router/rules.yaml").read_text())
+    policy["tiers"]["simple"]["categories"] = ["style"]
+    rules_file = tmp_path / "rules.yaml"
+    rules_file.write_text(yaml.safe_dump(policy))
+    with harness(rules_file=rules_file) as (client, _, _):
+        result = client.post("/v1/route", headers=AUTH, json={"task": "提交 Git"}).json()
+        assert result["decision"]["model"] == "gpt-6.1-sol"
 
 
 def test_unsupported_sol_effort_fails_at_startup(harness, tmp_path):

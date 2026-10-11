@@ -15,6 +15,7 @@ Category = Literal[
     "explanation",
     "research",
     "planning",
+    "operation",
     "general",
 ]
 

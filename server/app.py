@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from config.settings import Settings
 from providers.upstream import SSEObserver, chatgpt_headers, response_headers, upstream_headers
+from router.account_catalog import auto_context_limits
 from router.project_analyzer import ProjectAccessError
 from router.types import RouteDecision, RoutePreview
 from server.service import MissingRouteError, RouterService
@@ -217,7 +218,7 @@ def create_app(
             raise APIError(503, "upstream_not_configured", "Set SMART_ROUTER_UPSTREAM_API_KEY")
         service: RouterService = request.app.state.router
         incoming_headers = dict(request.headers)
-        decision = await service.resolve(body, incoming_headers)
+        decision = await service.resolve(body, incoming_headers, new_tasks=endpoint == "responses")
         payload = copy.deepcopy(body)
         payload["model"] = decision.model
         if endpoint == "responses" and body["model"] == "smart-auto" and decision.reasoning:
@@ -241,10 +242,11 @@ def create_app(
             upstream = await service.client.send(upstream_request, stream=True)
             outgoing = {**response_headers(upstream), **route_headers(decision)}
             logger.info(
-                "route model=%s reasoning=%s source=%s upstream_status=%s",
+                "route model=%s reasoning=%s source=%s reason=%s upstream_status=%s",
                 decision.model,
                 decision.reasoning,
                 decision.source,
+                decision.reason,
                 upstream.status_code,
             )
             if not streaming or upstream.is_error:
@@ -368,6 +370,9 @@ def create_app(
                 )
                 if template and template.get("base_instructions"):
                     auto["base_instructions"] = template["base_instructions"]
+                auto.update(
+                    auto_context_limits(auto, native_models, request.app.state.router.engine.models)
+                )
                 # Forward full Responses over HTTP/SSE, preserving manual choices.
                 catalog["models"] = [auto, *native_models]
                 for model in catalog["models"]:
