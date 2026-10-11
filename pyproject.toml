@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codex-smart-router"
+version = "0.1.0"
+description = "A local task-aware Responses API provider for Codex"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<0.29",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.8,<3",
+  "PyYAML>=6,<7",
+  "uvicorn>=0.34,<1",
+  "zstandard>=0.23,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "ruff>=0.11,<1"]
+gateway = ["litellm[proxy]>=1.82,<2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["server", "router", "providers", "config"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".run"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+

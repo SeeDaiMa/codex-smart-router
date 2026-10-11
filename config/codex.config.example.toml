@@ -1,0 +1,17 @@
+# Review this snippet before adding it to your user config. This project never installs it.
+model_provider = "smart-router"
+
+[model_providers.smart-router]
+name = "OpenAI"
+base_url = "http://127.0.0.1:4000/backend-api/codex"
+model_catalog_url = "http://127.0.0.1:4000/backend-api/codex/models"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = false
+request_max_retries = 0
+stream_max_retries = 0
+
+# Codex owns the ChatGPT login and token refresh. Do not add env_key or auth here.
+# The gateway prepends Auto to the account's native model catalog. Original manual
+# choices remain available. Select Auto in a new chat to use task-based routing.
+

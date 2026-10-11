@@ -1,0 +1,20 @@
+# Optional, separately billed API route. Not the default account route.
+model = "smart-auto"
+model_provider = "smart-router-api"
+model_reasoning_effort = "medium"
+model_catalog_json = "/Users/Codex Auto /codex-smart-router/config/codex-models.json"
+
+[model_providers.smart-router-api]
+name = "Smart Router API"
+base_url = "http://127.0.0.1:4000/v1"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+request_max_retries = 0
+stream_max_retries = 0
+
+[model_providers.smart-router-api.auth]
+command = "/Users/Codex Auto /codex-smart-router/.venv/bin/python"
+args = ["/Users/Codex Auto /codex-smart-router/scripts/print_router_token.py"]
+timeout_ms = 5000
+refresh_interval_ms = 300000
