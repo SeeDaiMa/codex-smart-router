@@ -87,8 +87,10 @@ SMART_ROUTER_CLASSIFIER_ENABLED=false
 
 ```sh
 cd "/Users/Codex Auto /codex-smart-router"
-.venv/bin/python -m uvicorn server.app:app --host 127.0.0.1 --port 4000 --workers 1
+./scripts/start-router.sh
 ```
+
+脚本会开启实际请求的路由日志，例如 `route model=gpt-6.1-sol reasoning=high source=heuristic upstream_status=200`。其中 `model` 和 `reasoning` 是本次请求实际采用的模型与推理程度；`source=continuation` 表示沿用已有对话的选型。多个聊天同时运行时，需要按请求时间对应日志。
 
 看到 Uvicorn 在 `http://127.0.0.1:4000` 启动后，另开终端检查服务和规则：
 
@@ -148,7 +150,7 @@ stream_max_retries = 0
 
 ```sh
 cd "/Users/Codex Auto /codex-smart-router"
-.venv/bin/python -m uvicorn server.app:app --host 127.0.0.1 --port 4000 --workers 1
+./scripts/start-router.sh
 ```
 
 修改 `.env` 后需要重启 Router。服务只使用一个 worker，当前没有注册开机启动；电脑重启后需要重新运行启动命令。Router 重启会清空对话路由状态，应新建 Auto 对话。
