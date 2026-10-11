@@ -216,10 +216,11 @@ def create_app(
         if settings.auth_mode == "api" and not key:
             raise APIError(503, "upstream_not_configured", "Set SMART_ROUTER_UPSTREAM_API_KEY")
         service: RouterService = request.app.state.router
-        decision = await service.resolve(body, dict(request.headers))
+        incoming_headers = dict(request.headers)
+        decision = await service.resolve(body, incoming_headers)
         payload = copy.deepcopy(body)
         payload["model"] = decision.model
-        if endpoint == "responses" and body["model"] == "smart-auto":
+        if endpoint == "responses" and body["model"] == "smart-auto" and decision.reasoning:
             payload["reasoning"] = {
                 **(payload.get("reasoning") or {}),
                 "effort": decision.reasoning,
@@ -248,11 +249,11 @@ def create_app(
             )
             if not streaming or upstream.is_error:
                 data = await upstream.aread()
-                if not upstream.is_error and endpoint == "responses":
+                if not upstream.is_error:
                     try:
                         value = json.loads(data)
                         if isinstance(value, dict):
-                            service.cache.remember_response(value, decision)
+                            service.remember_response(value, decision, incoming_headers)
                     except ValueError:
                         pass
                 await upstream.aclose()
@@ -283,7 +284,9 @@ def create_app(
             ) from exc
 
         async def stream():
-            observer = SSEObserver(lambda value: service.cache.remember_response(value, decision))
+            observer = SSEObserver(
+                lambda value: service.remember_response(value, decision, incoming_headers)
+            )
             try:
                 async for chunk in upstream.aiter_bytes():
                     observer.feed(chunk)

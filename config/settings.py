@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     max_scan_files: int = Field(default=5000, ge=1, le=100000)
     route_ttl_seconds: int = Field(default=7200, ge=1)
     route_capacity: int = Field(default=4096, ge=1)
+    route_state_file: Path | None = PROJECT_DIR / ".run" / "routes.sqlite3"
 
     @field_validator("upstream_base_url", "chatgpt_base_url")
     @classmethod

@@ -41,7 +41,7 @@ class ProjectContext(BaseModel):
 class RouteDecision(BaseModel):
     model: str
     reasoning: str
-    source: Literal["rule", "heuristic", "classifier", "continuation", "manual"]
+    source: Literal["rule", "heuristic", "classifier", "continuation", "manual", "recovery"]
     rule_id: str | None = None
     reason: str
 

@@ -1,4 +1,7 @@
 import asyncio
+import hashlib
+import json
+import logging
 from typing import Any
 
 import httpx
@@ -8,10 +11,12 @@ from providers.upstream import upstream_headers
 from router.account_catalog import AccountCatalog
 from router.classifier import ModelClassifier, heuristic_analysis
 from router.decision import DecisionEngine
-from router.input_context import extract_context
+from router.input_context import extract_context, history_keys
 from router.project_analyzer import ProjectAnalyzer
 from router.route_cache import RouteCache
-from router.types import RouteDecision, RoutePreview
+from router.types import ProjectContext, RouteDecision, RoutePreview
+
+logger = logging.getLogger(__name__)
 
 
 class MissingRouteError(ValueError):
@@ -34,7 +39,9 @@ class RouterService:
                     "use deterministic policy for ChatGPT account routing"
                 )
             self.engine.validate_route(settings.classifier_model, "low")
-        self.cache = RouteCache(settings.route_capacity, settings.route_ttl_seconds)
+        self.cache = RouteCache(
+            settings.route_capacity, settings.route_ttl_seconds, settings.route_state_file
+        )
         self.account_catalog = AccountCatalog(client)
 
     async def preview(self, task: str, project_root: str | None = None) -> RoutePreview:
@@ -77,26 +84,29 @@ class RouterService:
             analysis=analysis, project=project, decision=decision, classifier_status=status
         )
 
+    def route_scope(self, headers: dict[str, str]) -> str:
+        # Stable account IDs survive token refresh; never persist credentials or account IDs.
+        if self.settings.auth_mode == "chatgpt":
+            account = headers.get("chatgpt-account-id") or headers.get("authorization", "")
+        else:
+            key = self.settings.upstream_api_key
+            account = key.get_secret_value() if key else ""
+        identity = [self.settings.auth_mode, self.settings.inference_base_url, account]
+        return hashlib.sha256(json.dumps(identity).encode()).hexdigest() + ":"
+
+    def remember_response(
+        self, response: dict, decision: RouteDecision, headers: dict[str, str]
+    ) -> None:
+        keys = list(history_keys(response.get("output")))
+        response_id = response.get("id")
+        if isinstance(response_id, str) and response_id:
+            keys.append("response:" + response_id)
+        scope = self.route_scope(headers)
+        self.cache.put_many([scope + key for key in keys], decision)
+
     async def resolve(self, body: dict[str, Any], headers: dict[str, str]) -> RouteDecision:
         context = extract_context(body)
-        if self.settings.auth_mode == "chatgpt" and body["model"] != "smart-auto":
-            # Manual selection belongs to Codex and the account backend. In particular,
-            # do not require local routing state for an existing manual conversation.
-            return RouteDecision(
-                model=body["model"],
-                reasoning=(body.get("reasoning") or {}).get("effort") or "",
-                source="manual",
-                reason="Preserve the model and reasoning selected in Codex",
-            )
-        previous = body.get("previous_response_id")
-        if previous:
-            cached = self.cache.get("response:" + previous)
-            if cached is None:
-                raise MissingRouteError(
-                    "Routing state for previous_response_id expired or was lost. "
-                    "Start a new conversation; opaque provider state cannot be safely rerouted."
-                )
-            return cached.model_copy(update={"source": "continuation"})
+        scope = self.route_scope(headers)
         session_id = next(
             (
                 headers[key]
@@ -105,24 +115,83 @@ class RouterService:
             ),
             None,
         ) or body.get("prompt_cache_key")
+        session_key = (
+            "session:" + hashlib.sha256(session_id.encode()).hexdigest() if session_id else None
+        )
         task_key = context.task_key(session_id)
-        cached = self.cache.get(task_key)
-        if cached:
-            return cached.model_copy(update={"source": "continuation"})
-        if context.has_tool_history or context.has_opaque_history:
-            # Codex can resend the complete transcript with a new user message.
-            # Continue the known chain rather than rerouting opaque prior reasoning.
-            for previous_task in reversed(context.tasks[:-1]):
-                cached = self.cache.get(context.task_key(session_id, previous_task))
-                if cached:
-                    self.cache.put(task_key, cached)
-                    return cached.model_copy(update={"source": "continuation"})
-            raise MissingRouteError(
-                "No routing state for this tool/reasoning chain. Start a new conversation "
-                "after a router restart or expired routing state."
+        history = history_keys(body.get("input"))
+
+        def remember(decision: RouteDecision) -> RouteDecision:
+            keys = [*history]
+            # A followup's text is not a new chain identity. Persisting it as a
+            # task route can attach a different chat with that text to this model.
+            if context.task and not (
+                body.get("previous_response_id")
+                or context.has_tool_history
+                or context.has_opaque_history
+            ):
+                keys.append(task_key)
+            if session_key:
+                keys.append(session_key)
+            self.cache.put_many([scope + key for key in keys], decision)
+            return decision
+
+        if self.settings.auth_mode == "chatgpt" and body["model"] != "smart-auto":
+            # Manual selection belongs to Codex and the account backend. In particular,
+            # do not require local routing state for an existing manual conversation.
+            return remember(
+                RouteDecision(
+                    model=body["model"],
+                    reasoning=(body.get("reasoning") or {}).get("effort") or "",
+                    source="manual",
+                    reason="Preserve the model and reasoning selected in Codex",
+                )
             )
+        previous = body.get("previous_response_id")
+        if previous:
+            cached = self.cache.get(scope + "response:" + previous)
+            if cached:
+                return remember(cached.model_copy(update={"source": "continuation"}))
+        continuation = bool(previous or context.has_tool_history or context.has_opaque_history)
+        if continuation:
+            # Opaque and tool IDs remain usable when compact drops the original task
+            # or resume changes a session header/project directory.
+            lookup = list(reversed(history))
+            if session_key:
+                lookup.append(session_key)
+            # Only the original task may identify a pre-existing chain. Later
+            # user messages can match entirely unrelated conversations.
+            lookup.extend(context.task_key(session_id, task) for task in context.tasks[:1])
+            for key in lookup:
+                cached = self.cache.get(scope + key)
+                if cached:
+                    return remember(cached.model_copy(update={"source": "continuation"}))
+            # Upgrade recovery for conversations predating the durable store. Reconstruct
+            # from the earliest supplied task, not the latest followup or a tool's output.
+            # No classifier request, project scan, history stripping or tool replay.
+            original = context.tasks[0] if context.tasks else ""
+            project = ProjectContext()
+            if original:
+                decision = self.engine.hard_rule(original, project) or self.engine.decide(
+                    heuristic_analysis(original, project)
+                )
+            else:
+                decision = RouteDecision(
+                    model=self.engine.default.model,
+                    reasoning=self.engine.default.reasoning,
+                    source="recovery",
+                    reason="No saved route or original task; use configured default",
+                )
+            logger.warning(
+                "Recovered missing continuation route model=%s reasoning=%s",
+                decision.model,
+                decision.reasoning,
+            )
+            return remember(decision.model_copy(update={"source": "recovery"}))
+        cached = self.cache.get(scope + task_key)
+        if cached:
+            return remember(cached.model_copy(update={"source": "continuation"}))
         if not context.task:
             raise MissingRouteError("No user task or known response chain was supplied")
         preview = await self.preview(context.task, context.project_root)
-        self.cache.put(task_key, preview.decision)
-        return preview.decision
+        return remember(preview.decision)

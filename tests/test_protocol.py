@@ -186,8 +186,8 @@ def test_full_transcript_continues_without_reclassifying_tool_output(harness):
         )
 
 
-def test_unknown_continuation_fails_before_upstream(harness):
-    with harness() as (client, requests, _):
+def test_unknown_continuation_recovers_with_default_and_preserves_provider_id(harness):
+    with harness() as (client, requests, app):
         response = client.post(
             "/v1/responses",
             headers=AUTH,
@@ -197,9 +197,12 @@ def test_unknown_continuation_fails_before_upstream(harness):
                 "previous_response_id": "unknown",
             },
         )
-        assert response.status_code == 409
-        assert response.json()["error"]["code"] == "routing_state_missing"
-        assert not requests
+        assert response.status_code == 200
+        assert response.headers["x-smart-router-source"] == "recovery"
+        forwarded = json.loads(requests[0].content)
+        assert forwarded["model"] == app.state.router.engine.default.model
+        assert forwarded["previous_response_id"] == "unknown"
+        assert forwarded["input"] == []
 
 
 @pytest.mark.parametrize("status", [401, 429, 500, 503])

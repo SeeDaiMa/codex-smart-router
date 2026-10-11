@@ -29,7 +29,7 @@ Smart Router :4000
 | Task Classifier | 可选使用 Luna + 严格 JSON schema；超时、错误或不合格输出回退到确定性策略 |
 | 项目识别 | 可选识别 Salesforce、React、Java、Python、Rust、Go、.NET；作为上下文，不按技术栈名称决定模型 |
 | Git 改动 | 只读检查工作区的 staged、unstaged、untracked 路径，不执行 checkout、reset 或修改源项目 |
-| 连续调用 | 根据 response id 或任务/会话标识保留原模型；状态缺失返回明确的 409 |
+| 连续调用 | 根据 response id、会话和历史条目标识保存原模型；重启、闲置后可恢复；升级前丢失记录的旧会话自动恢复路由 |
 | 本地凭据 | 免费路由预览使用独立本地 token；账号调用透传 Codex 凭据；API 模式单独配置上游 key |
 | 路由预览 | `POST /v1/route` 返回分类、项目摘要、选定模型、reasoning 和命中规则 |
 
@@ -153,7 +153,11 @@ cd "/Users/Codex Auto /codex-smart-router"
 ./scripts/start-router.sh
 ```
 
-修改 `.env` 后需要重启 Router。服务只使用一个 worker，当前没有注册开机启动；电脑重启后需要重新运行启动命令。Router 重启会清空对话路由状态，应新建 Auto 对话。
+修改 `.env` 后需要重启 Router。服务只使用一个 worker，当前没有注册开机启动；电脑重启后需要重新运行启动命令。服务恢复后，可以继续原 Auto 对话，无需因为 Router 重启而新建聊天。
+
+路由记录默认保存在项目的 `.run/routes.sqlite3`，文件权限为 `0600`；可通过 `SMART_ROUTER_ROUTE_STATE_FILE` 指定其他位置。只保存哈希标识和模型选型，不保存聊天正文、工具输出、加密历史正文或账号凭据。记录按上游地址与账号隔离，账号 ID 不变时刷新登录 token 不会丢失路由。默认 2 小时 TTL 和 4,096 条容量只约束内存缓存；磁盘记录不随闲置或内存淘汰而删除。保留此文件即可跨服务重启恢复。
+
+对于升级前已经丢失记录的会话，Router 优先查找响应 ID、历史条目和会话标识；仍找不到时，根据输入中最早的用户任务按当前规则重建路由。原始任务也不在输入中时，使用配置的默认模型。首次恢复标记为 `source=recovery`，随后保存并固定选型。历史和工具结果完整透传，不自动重放工具或模型请求。缺少旧记录时无法保证推断结果等于当时原模型；上游本身失效的响应 ID、模型权限或历史兼容性错误仍由上游返回。
 
 停止服务：在运行 Router 的终端按 `Ctrl+C`。退出 Router 模式：将 `~/.codex/config.toml` 中的 `model_provider` 恢复为启用前的值；如果原来没有这一行，就移除新增的顶层 `model_provider`，然后重新启动 Codex。新增的 provider 表可以保留备用。
 
@@ -339,7 +343,7 @@ cd "/Users/Codex Auto /codex-smart-router"
 
 按当前配置结果依次为 Sol / high、Luna / xhigh、Sol / xhigh、Sol / high。检查 `analysis` 中的类别、复杂度、风险，以及 `decision` 中的模型、reasoning 和来源；未配置覆盖规则时 `rule_id` 为空。分类器关闭时，预览不调用真实模型。
 
-重启会清空连续调用的路由状态，修改后在 Codex 新建 Auto 对话。修改主力模型后，账号模型目录会使用该默认模型的原生基础指令；如果还要更新 API 模式的静态备用指令，运行 `scripts/refresh_catalog.py --template-model 对应模型名`，然后让 Codex 重新加载模型目录。
+重启后已有对话仍沿用保存的模型与推理程度；希望采用新规则时，在 Codex 新建 Auto 对话。修改主力模型后，账号模型目录会使用该默认模型的原生基础指令；如果还要更新 API 模式的静态备用指令，运行 `scripts/refresh_catalog.py --template-model 对应模型名`，然后让 Codex 重新加载模型目录。
 
 ## 模型目录与账号配置说明
 
@@ -389,7 +393,7 @@ Codex 请求中的 `<environment_context><cwd>…</cwd></environment_context>` �
 | Codex 提示 TOML 配置错误 | 检查是否重复添加同名字段或 provider 表，顶层设置是否误放到了其他表下面。按配置示例修改已有项。 |
 | 账号模式返回 401 | 运行 `codex login status` 检查登录；必要时重新执行 `codex login`，确认使用 ChatGPT 登录。不要将本地预览 token 填成账号凭据。 |
 | 官方返回模型权限错误或 429 | 检查当前账号的模型权限或额度，并按官方返回的等待时间处理。Router 会保留这些错误，不会自动换模型重试。 |
-| 返回 `routing_state_missing` / HTTP 409 | Router 重启、缓存过期或旧对话缺少路由状态时可能出现。新建 Auto 对话，让 Router 重新选择模型。 |
+| 重连后旧对话曾返回 `routing_state_missing` / HTTP 409 | 重启服务加载新版恢复逻辑，然后在原聊天重试。新版会读取保存记录或恢复旧会话路由；只有完全没有用户任务和继续调用历史的无效请求才返回此错误。 |
 | 预览中的项目扫描显示 `disabled` | 默认不扫描本地项目。按“项目上下文与分类器”配置 `SMART_ROUTER_PROJECT_ROOTS`，重启 Router，并在预览中传入 `--project-root`。 |
 | API 模式无法连接 `127.0.0.1:4001` | 确认 LiteLLM 已在另一个终端启动；账号模式无需运行这个服务。 |
 | API 模式中 LiteLLM 返回认证错误 | 检查本地 `.env` 中 `SMART_ROUTER_UPSTREAM_API_KEY` 与 `LITELLM_MASTER_KEY` 是否一致，以及 `OPENAI_API_KEY` 是否有效；修改后重启相应服务。 |
@@ -400,6 +404,7 @@ Codex 请求中的 `<environment_context><cwd>…</cwd></environment_context>` �
 .venv/bin/pytest
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
+.venv/bin/python scripts/verify_route_recovery.py
 .venv/bin/python scripts/smoke_codex.py
 .venv/bin/python scripts/smoke_codex.py --account-auth \
   --report .run/smoke-account-report.json
@@ -408,6 +413,8 @@ Codex 请求中的 `<environment_context><cwd>…</cwd></environment_context>` �
 ```
 
 前两类检查验证路由行为、权限边界、数据透传、错误处理与格式。smoke 脚本启动随机 loopback 端口的模拟 Responses 服务和真实 Router，调用已安装的 Codex CLI，让它执行一次只读 `pwd`，然后通过流式响应收到固定标记。
+
+`verify_route_recovery.py` 使用独立的临时 SQLite 文件和本地模拟上游，实际终止并重启 Router 进程两次，验证同一聊天的工具继续调用、压缩后历史恢复和升级前旧会话补救。当前验证通过，5 次 HTTP 请求均返回 200，没有自动重放；报告保存在 `.run/route-recovery-http-report.json`。测试不会重启正在使用的 4000 端口服务或调用真实模型。
 
 `--account-auth` 使用 Codex 当前登录向本地模拟上游验证凭据透传和原生模型目录，不读取或保存登录凭据。`--with-litellm` 再加入实际 LiteLLM Proxy，推理上游仍是本地模拟服务。这些测试不调用真实模型、不写用户 Codex 配置，退出时停止测试服务。报告位于 `.run/`；它们不证明真实模型权限或桌面端显示。
 
@@ -420,7 +427,7 @@ Codex 请求中的 `<environment_context><cwd>…</cwd></environment_context>` �
 
 脚本临时启动本地 Router，让 Codex 自己管理账号认证，不改变全局配置，退出时停止服务。报告只记录目录状态、路由、返回模型与用量，不记录凭据或输入历史；保存在 `.run/live-account-report.json`。真实账号请求完成也不等于桌面模型菜单已经验收。
 
-当前通用路由通过 92 项本地测试和 Ruff 检查，覆盖跨技术栈相同选型、无项目任务、普通文本转换、风险保底、不同文件后缀与改动范围，以及原有认证、数据透传、流式响应和连续调用行为。
+当前通用路由及会话恢复通过 104 项本地测试和 Ruff 检查，覆盖跨技术栈相同选型、无项目任务、普通文本转换、风险保底、不同文件后缀与改动范围，以及认证、数据透传、流式响应、服务重启、内存过期/淘汰、压缩历史恢复、旧会话补救和账号隔离。恢复测试使用本地模拟上游，不证明真实模型对旧加密历史的兼容性。
 
 此前模型更新时，曾使用真实 Codex CLI、Router、LiteLLM Proxy 与本地模拟模型服务验证工具调用往返，两次调用均保持 `gpt-6.1-sol` / `high`；未调用真实模型或产生 API 费用。报告见 `.run/model-update-smoke-litellm.json`。这个历史报告不是当前通用路由的端到端验收。
 
@@ -430,7 +437,7 @@ Codex 请求中的 `<environment_context><cwd>…</cwd></environment_context>` �
 
 - 路由依据规则和可选分类器，没有针对业务任务训练或评估过准确率，不应把分类分数当成业务风险保证。
 - 连续工具调用和携带旧加密 reasoning 的对话保持原模型；完整历史中的后续用户消息也可能继续原路由。希望新任务重新选型时，开始新的 Auto 对话。
-- 路由状态保存在单进程内，默认 2 小时 TTL、最多 4,096 条；Router 只启动一个 worker。重启、过期或淘汰后，无法识别的继续调用返回 `routing_state_missing` / HTTP 409，需要新对话。
+- 路由状态使用本地 SQLite 持久化；默认 2 小时 TTL、最多 4,096 条只限制内存缓存。Router 只启动一个 worker；重启、过期或淘汰后继续读取磁盘记录。磁盘记录不自动过期，需保留状态文件；完全没有旧记录时按现有历史恢复，无法保证与原先模型完全一致。
 - 没有自动升级、失败后换模型、跨 provider 加密 reasoning 转换、持久化用户 Memory，也没有部署或注册开机服务。
 - 上游 401/429/5xx 保留原错误和 Retry-After；中途流断开会发送错误事件，Router 不重放任务。
 - 支持完整 Responses、SSE、模型目录和上下文 compact 路由；真实 compact 需单独验收。MVP 不支持 WebSocket、私有 Responses Lite、搜索等额外 Codex 端点；模型目录关闭 Lite 传输。

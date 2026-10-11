@@ -5,6 +5,31 @@ from dataclasses import dataclass
 from typing import Any
 
 
+def history_keys(items: Any) -> tuple[str, ...]:
+    """Link opaque/tool items across resumed and compacted transcripts using hashes only."""
+    keys = []
+    if not isinstance(items, list):
+        return ()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        identity = None
+        if kind in {"reasoning", "compaction"} and item.get("encrypted_content"):
+            identity = [kind, item["encrypted_content"]]
+        elif kind in {
+            "function_call",
+            "function_call_output",
+            "custom_tool_call",
+            "custom_tool_call_output",
+        } and item.get("call_id"):
+            identity = ["tool", item["call_id"]]
+        if identity is not None:
+            digest = hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()
+            keys.append("history:" + digest)
+    return tuple(dict.fromkeys(keys))
+
+
 @dataclass(frozen=True)
 class InputContext:
     task: str

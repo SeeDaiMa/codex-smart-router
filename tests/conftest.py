@@ -32,6 +32,7 @@ def harness():
                 "auth_mode": "api",
                 "api_key": SecretStr(ROUTER_TOKEN),
                 "upstream_api_key": SecretStr(UPSTREAM_TOKEN),
+                "route_state_file": None,
                 **overrides,
             }
         )
